@@ -1,0 +1,427 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Physical/Direct Visibility Graph - Illithe</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/d3/7.9.0/d3.min.js"></script>
+<style>
+  :root{
+    --bg:#000000;
+    --ink:#ffffff;
+    --ink-dim:#8b909c;
+    --frame:#6b7280;
+    --line:#3a4049;
+    --out:#ff0000;
+    --in:#ffffff;
+    --idle-link:#abb5c4;
+    --idle-node:#ff0000;
+    --idle-width:.15;
+    --hover-width:.2;
+    --font-family:"IBM Plex Mono","SFMono-Regular",Consolas,monospace;
+    --fs-title:7px;
+    --fs-sub:2.6px;
+    --fs-group:3.1px;
+    --fs-node:2.2px;
+    --fs-legend:2.7px;
+    --fs-legend-head:2.3px;
+    --fs-disclaimer:5.5px;
+    --disclaimer-ink:#9aa1ad;
+    --grid-opacity:.15;
+    --grid-bold-opacity:.24;
+  }
+  *{box-sizing:border-box;}
+  html,body{
+    margin:0; padding:0; background:#000000; color:var(--ink);
+    font-family:"IBM Plex Mono","SFMono-Regular",Consolas,monospace;
+  }
+  #app{ display:grid; grid-template-columns: 1fr 320px; min-height:100vh; }
+  #stage{
+    display:flex; align-items:center; justify-content:center;
+    padding:18px; background:#000000; position:relative;
+  }
+  #poster-wrap{ width:100%; max-width:1400px; }
+  svg#viz{
+    display:block; width:100%; height:auto; aspect-ratio:420/297;
+    background:var(--bg);
+  }
+  text{ font-family:var(--font-family); }
+  .frame{ fill:none; stroke:var(--frame); stroke-width:.35; }
+  .tick{ fill:none; stroke:var(--frame); stroke-width:.35; }
+  .grid-fine{ fill:none; stroke:var(--ink-dim); stroke-width:.12; opacity:var(--grid-opacity); }
+  .grid-bold{ fill:none; stroke:var(--ink-dim); stroke-width:.2; opacity:var(--grid-bold-opacity); }
+  .group-arc{ fill:none; stroke:var(--line); stroke-width:.6; }
+  .guide-ring{ fill:none; stroke:var(--line); stroke-width:.3; }
+  .group-label{ fill:var(--ink); font-size:var(--fs-group); letter-spacing:.04em; font-weight:700; }
+  .node circle{ fill:var(--idle-node); stroke:none; }
+  .node text{ fill:var(--ink-dim); font-size:var(--fs-node); cursor:default; }
+  .node.hovered text{ fill:var(--ink); font-weight:700; }
+  .node.src-hit text{ fill:var(--out); font-weight:600; }
+  .node.tgt-hit text{ fill:var(--in); font-weight:600; }
+  .link{ fill:none; stroke:var(--idle-link); stroke-opacity:.85; stroke-width:var(--idle-width); stroke-linecap:round; }
+  .link.out{ stroke:var(--out); stroke-opacity:1; stroke-width:var(--hover-width); }
+  .link.in{ stroke:var(--in); stroke-opacity:1; stroke-width:var(--hover-width); }
+  .poster-title{ fill:var(--ink); font-size:var(--fs-title); font-weight:700; letter-spacing:.01em; }
+  .poster-sub{ fill:var(--ink-dim); font-size:var(--fs-sub); letter-spacing:.02em; }
+  .legend-text{ fill:var(--ink); font-size:var(--fs-legend); }
+  .legend-head{ fill:var(--ink-dim); font-size:var(--fs-legend-head); letter-spacing:.06em; }
+  .disclaimer{ fill:var(--disclaimer-ink); font-size:var(--fs-disclaimer); font-style:italic; }
+  .knockout{ fill:var(--bg); stroke:none; }
+
+  #panel{
+    border-left:1px solid #262a31; padding:18px; background:#000000;
+    overflow-y:auto; max-height:100vh; font-size:12px;
+  }
+  #panel h2{
+    font-size:10.5px; text-transform:uppercase; letter-spacing:.1em; color:var(--ink-dim);
+    margin:0 0 4px; font-family:inherit;
+  }
+  #panel .id{ font-size:20px; font-weight:700; margin:0 0 2px; color:var(--ink); }
+  #panel .desc{ font-size:12px; color:var(--ink-dim); margin:0 0 14px; }
+  .legend{ display:flex; flex-direction:column; gap:8px; font-size:11px; color:var(--ink-dim); margin-bottom:16px;}
+  .legend div{ display:flex; align-items:center; gap:8px; }
+  .swatch{ width:18px; height:2px; border-radius:2px; }
+  .rowgrp{ margin-bottom:14px; }
+  .rowgrp h3{ font-size:10px; text-transform:uppercase; letter-spacing:.08em; margin:0 0 6px; }
+  .rowgrp.out h3{ color:var(--out); }
+  .rowgrp.in h3{ color:var(--in); }
+  .conn{ font-size:11.5px; padding:5px 0; border-bottom:1px dashed #262a31; }
+  .conn b{ color:var(--ink); }
+  .conn span{ color:var(--ink-dim); display:block; font-size:10.5px; }
+  .empty{ color:var(--ink-dim); font-size:12px; line-height:1.5; }
+  /* hover picture. Put image files in a folder called "images" next to this
+     HTML file, named after the node code: images/LAWN.jpg, images/B02.png ... */
+  #nodeImg{ display:none; width:100%; height:auto; margin-bottom:10px; border:1px solid #262a31; }
+  #imgHint{ display:none; font-size:9.5px; color:#4a4f57; margin:0 0 10px; font-style:italic; }
+  #panel::-webkit-scrollbar{ width:6px; }
+  #panel::-webkit-scrollbar-thumb{ background:#262a31; border-radius:3px; }
+</style>
+</head>
+<body>
+<div id="app">
+  <div id="stage"><div id="poster-wrap"><svg id="viz" viewBox="0 0 420 297" xmlns="http://www.w3.org/2000/svg"></svg></div></div>
+  <div id="panel">
+    <div class="legend">
+      <div><span class="swatch" style="background:var(--out)"></span> outgoing — this point can see</div>
+      <div><span class="swatch" style="background:var(--in)"></span> incoming — is seen from</div>
+    </div>
+    <img id="nodeImg" alt="">
+    <p id="imgHint"></p>
+    <div id="detail"></div>
+  </div>
+</div>
+
+<script>
+const DATA = {"nodes": [{"id": "LAWN", "desc": "Open lawn area", "group": "Site & Grounds", "subgroup": "Site & Grounds", "capacity": "100"}, {"id": "BLA", "desc": "Blakdot Gallery", "group": "External Context", "subgroup": "External Context", "capacity": "25"}, {"id": "APAT", "desc": "Construction Site of Apartment", "group": "External Context", "subgroup": "External Context", "capacity": "400"}, {"id": "403", "desc": "Community Room", "group": "Interior Rooms", "subgroup": "Floor 4", "capacity": "20"}, {"id": "G01", "desc": "Community Room", "group": "Interior Rooms", "subgroup": "Ground Floor", "capacity": "100"}, {"id": "G02", "desc": "Community Kitchen", "group": "Interior Rooms", "subgroup": "Ground Floor", "capacity": "5"}, {"id": "HOUSE", "desc": "The House", "group": "External Context", "subgroup": "External Context", "capacity": "20"}, {"id": "E00", "desc": "Elevator (Outside)", "group": "Vertical Circulation", "subgroup": "Elevators", "capacity": null}, {"id": "POOL", "desc": "Brunswick Bath", "group": "External Context", "subgroup": "External Context", "capacity": "450"}, {"id": "E01", "desc": "Elevator (Outside)", "group": "Vertical Circulation", "subgroup": "Elevators", "capacity": null}, {"id": "B01", "desc": "Balcony Floor 1", "group": "Balconies", "subgroup": "Floor 1", "capacity": "8"}, {"id": "KITCH", "desc": "Community Kitchen", "group": "Interior Rooms", "subgroup": "Ground Floor", "capacity": "15"}, {"id": "WOOLIE", "desc": "WoolsWorth", "group": "External Context", "subgroup": "External Context", "capacity": "400"}, {"id": "ST2", "desc": "Staircase (Floor 1-2)", "group": "Vertical Circulation", "subgroup": "Staircases", "capacity": null}, {"id": "SOUTH", "desc": "South Building", "group": "External Context", "subgroup": "External Context", "capacity": "60"}, {"id": "E02", "desc": "Elevator (Outside)", "group": "Vertical Circulation", "subgroup": "Elevators", "capacity": null}, {"id": "201", "desc": "Community Room", "group": "Interior Rooms", "subgroup": "Floor 2", "capacity": null}, {"id": "202", "desc": "Community Room", "group": "Interior Rooms", "subgroup": "Floor 2", "capacity": null}, {"id": "205", "desc": "Community Room", "group": "Interior Rooms", "subgroup": "Floor 2", "capacity": null}, {"id": "204", "desc": "Community Room", "group": "Interior Rooms", "subgroup": "Floor 2", "capacity": null}, {"id": "B02", "desc": "Balcony Floor 2", "group": "Balconies", "subgroup": "Floor 2", "capacity": "8"}, {"id": "203", "desc": "Community Room", "group": "Interior Rooms", "subgroup": "Floor 2", "capacity": "20"}, {"id": "303", "desc": "Community Room", "group": "Interior Rooms", "subgroup": "Floor 3", "capacity": "6"}, {"id": "ST3", "desc": "Staircase (Floor 2-3)", "group": "Vertical Circulation", "subgroup": "Staircases", "capacity": null}, {"id": "GYM", "desc": "Brunswich Health", "group": "External Context", "subgroup": "External Context", "capacity": "80"}, {"id": "E03", "desc": "Elevator (Outside)", "group": "Vertical Circulation", "subgroup": "Elevators", "capacity": null}, {"id": "301", "desc": "Community Room", "group": "Interior Rooms", "subgroup": "Floor 3", "capacity": null}, {"id": "302", "desc": "Veardesign Room", "group": "Interior Rooms", "subgroup": "Floor 3", "capacity": null}, {"id": "305", "desc": "Community Room", "group": "Interior Rooms", "subgroup": "Floor 3", "capacity": null}, {"id": "ST4", "desc": "Staircase (Floor 3-4)", "group": "Vertical Circulation", "subgroup": "Staircases", "capacity": null}, {"id": "401", "desc": "Community Room", "group": "Interior Rooms", "subgroup": "Floor 4", "capacity": null}, {"id": "402", "desc": "Unsure_Office?", "group": "Interior Rooms", "subgroup": "Floor 4", "capacity": null}, {"id": "B04", "desc": "Balcony Floor 4", "group": "Balconies", "subgroup": "Floor 4", "capacity": "8"}, {"id": "405", "desc": "Community Room", "group": "Interior Rooms", "subgroup": "Floor 4", "capacity": null}, {"id": "404", "desc": "Community Room", "group": "Interior Rooms", "subgroup": "Floor 4", "capacity": null}, {"id": "E04", "desc": "Elevator (Outside)", "group": "Vertical Circulation", "subgroup": "Elevators", "capacity": null}, {"id": "107", "desc": "Blakedemy Room", "group": "Interior Rooms", "subgroup": "Floor 1", "capacity": null}, {"id": "207", "desc": "Community Room", "group": "Interior Rooms", "subgroup": "Floor 2", "capacity": null}, {"id": "B03", "desc": "Balcony Floor 3", "group": "Balconies", "subgroup": "Floor 3", "capacity": "8"}, {"id": "CAFE", "desc": "Home Economic Cafe", "group": "External Context", "subgroup": "External Context", "capacity": "20"}, {"id": "MOTHER", "desc": "Maternal Area", "group": "External Context", "subgroup": "External Context", "capacity": "5"}, {"id": "FRAME", "desc": "School Frame", "group": "Site & Grounds", "subgroup": "Site & Grounds", "capacity": null}], "edges": [{"source": "LAWN", "target": "BLA", "weight": 2, "features": ["General/Whole", "Facade"]}, {"source": "LAWN", "target": "APAT", "weight": 1, "features": ["Crane"]}, {"source": "LAWN", "target": "403", "weight": 1, "features": ["Window"]}, {"source": "G01", "target": "G02", "weight": 1, "features": ["General/Whole"]}, {"source": "G01", "target": "HOUSE", "weight": 1, "features": ["Back Side"]}, {"source": "G02", "target": "G01", "weight": 1, "features": ["General/Whole"]}, {"source": "G02", "target": "HOUSE", "weight": 1, "features": ["Back Side"]}, {"source": "E00", "target": "APAT", "weight": 1, "features": ["General/Whole"]}, {"source": "E00", "target": "POOL", "weight": 1, "features": ["Door"]}, {"source": "E01", "target": "APAT", "weight": 1, "features": ["General/Whole"]}, {"source": "E01", "target": "B01", "weight": 1, "features": ["Balcony"]}, {"source": "E01", "target": "KITCH", "weight": 1, "features": ["General/Whole"]}, {"source": "KITCH", "target": "LAWN", "weight": 1, "features": ["General/Whole"]}, {"source": "KITCH", "target": "WOOLIE", "weight": 1, "features": ["Parking Lot"]}, {"source": "ST2", "target": "APAT", "weight": 1, "features": ["General/Whole"]}, {"source": "ST2", "target": "POOL", "weight": 1, "features": ["Door"]}, {"source": "ST2", "target": "SOUTH", "weight": 1, "features": ["Door"]}, {"source": "E02", "target": "APAT", "weight": 1, "features": ["General/Whole"]}, {"source": "201", "target": "HOUSE", "weight": 1, "features": ["Back Side"]}, {"source": "202", "target": "HOUSE", "weight": 1, "features": ["Back Side"]}, {"source": "205", "target": "APAT", "weight": 1, "features": ["General/Whole"]}, {"source": "204", "target": "B02", "weight": 1, "features": ["Balcony"]}, {"source": "B02", "target": "LAWN", "weight": 1, "features": ["General/Whole"]}, {"source": "B02", "target": "WOOLIE", "weight": 1, "features": ["Parking Lot"]}, {"source": "B02", "target": "203", "weight": 1, "features": ["Window"]}, {"source": "B02", "target": "303", "weight": 1, "features": ["Window"]}, {"source": "ST3", "target": "APAT", "weight": 1, "features": ["General/Whole"]}, {"source": "ST3", "target": "GYM", "weight": 1, "features": ["General/Whole"]}, {"source": "ST3", "target": "SOUTH", "weight": 1, "features": ["Door"]}, {"source": "E03", "target": "APAT", "weight": 1, "features": ["General/Whole"]}, {"source": "301", "target": "GYM", "weight": 1, "features": ["General/Whole"]}, {"source": "302", "target": "HOUSE", "weight": 1, "features": ["Back Side"]}, {"source": "302", "target": "LAWN", "weight": 1, "features": ["General/Whole"]}, {"source": "305", "target": "APAT", "weight": 1, "features": ["General/Whole"]}, {"source": "ST4", "target": "APAT", "weight": 1, "features": ["General/Whole"]}, {"source": "ST4", "target": "GYM", "weight": 1, "features": ["General/Whole"]}, {"source": "ST4", "target": "SOUTH", "weight": 1, "features": ["Door"]}, {"source": "401", "target": "HOUSE", "weight": 1, "features": ["Back Side"]}, {"source": "402", "target": "HOUSE", "weight": 1, "features": ["Back Side"]}, {"source": "402", "target": "LAWN", "weight": 1, "features": ["General/Whole"]}, {"source": "B04", "target": "403", "weight": 1, "features": ["Window"]}, {"source": "B04", "target": "LAWN", "weight": 1, "features": ["Top View"]}, {"source": "B04", "target": "WOOLIE", "weight": 1, "features": ["Parking Lot"]}, {"source": "405", "target": "APAT", "weight": 1, "features": ["General/Whole"]}, {"source": "404", "target": "APAT", "weight": 1, "features": ["General/Whole"]}, {"source": "E04", "target": "POOL", "weight": 1, "features": ["General/Whole"]}, {"source": "E04", "target": "GYM", "weight": 1, "features": ["General/Whole"]}, {"source": "E04", "target": "APAT", "weight": 1, "features": ["General/Whole"]}, {"source": "107", "target": "APAT", "weight": 1, "features": ["General/Whole"]}, {"source": "207", "target": "APAT", "weight": 1, "features": ["General/Whole"]}, {"source": "LAWN", "target": "B01", "weight": 1, "features": ["Balcony"]}, {"source": "LAWN", "target": "B02", "weight": 1, "features": ["Balcony"]}, {"source": "LAWN", "target": "B03", "weight": 1, "features": ["Balcony"]}, {"source": "LAWN", "target": "B04", "weight": 1, "features": ["Balcony"]}, {"source": "LAWN", "target": "CAFE", "weight": 1, "features": ["General/Whole"]}, {"source": "LAWN", "target": "HOUSE", "weight": 1, "features": ["General/Whole"]}, {"source": "LAWN", "target": "MOTHER", "weight": 1, "features": ["Window"]}, {"source": "FRAME", "target": "LAWN", "weight": 1, "features": ["General/Whole"]}, {"source": "FRAME", "target": "HOUSE", "weight": 1, "features": ["General/Whole"]}, {"source": "FRAME", "target": "GYM", "weight": 1, "features": ["Door"]}, {"source": "FRAME", "target": "WOOLIE", "weight": 1, "features": ["General/Whole"]}, {"source": "FRAME", "target": "SOUTH", "weight": 1, "features": ["General/Whole"]}, {"source": "SOUTH", "target": "HOUSE", "weight": 1, "features": ["General/Whole"]}, {"source": "SOUTH", "target": "APAT", "weight": 1, "features": ["General/Whole"]}, {"source": "SOUTH", "target": "GYM", "weight": 1, "features": ["Door"]}, {"source": "B01", "target": "LAWN", "weight": 1, "features": ["General/Whole"]}, {"source": "B03", "target": "LAWN", "weight": 1, "features": ["General/Whole"]}]};
+const svgNS = "http://www.w3.org/2000/svg";
+const TITLE = "PHYSICAL/DIRECT VISIBILITY GRAPH - ILLITHE";
+const SUB = "42 locations  /  67 directed sightlines  /  bundled by location type & floor";
+const DISCLAIMER_LINES = [
+  "Generated from data sourced and recorded by Illithe",
+  "(S4286655@student.rmit.edu.au). All data owned by Illithe."
+];
+
+const FEATURE_ORDER = ["General/Whole","Back Side","Door","Balcony","Window","Parking Lot","Crane","Facade","Top View"];
+const FEATURE_PATTERNS = {
+  "General/Whole": "",
+  "Back Side":     "4.2,1.6",
+  "Door":          "1.4,1",
+  "Balcony":       "2.6,1.3",
+  "Window":        "0.15,1.1",
+  "Parking Lot":   "3,1,0.5,1",
+  "Crane":         "0.15,1,2.6,1",
+  "Facade":        "1,1.2,3.2,1.2",
+  "Top View":      "0.15,2.1"
+};
+
+function slug(f){ return f.toLowerCase().replace(/\//g,"-").replace(/\s+/g,"-"); }
+function dominantFeature(edge){
+  if(!edge.features.length) return "General/Whole";
+  return edge.features.find(f => f && f !== "General/Whole") || edge.features[0];
+}
+
+// ---- build hierarchy: root -> group -> subgroup -> leaf(node) ----
+const groupsMap = new Map();
+DATA.nodes.forEach(n => {
+  if(!groupsMap.has(n.group)) groupsMap.set(n.group, new Map());
+  const sg = groupsMap.get(n.group);
+  if(!sg.has(n.subgroup)) sg.set(n.subgroup, []);
+  sg.get(n.subgroup).push(n);
+});
+
+const hierarchyData = {
+  name: "root",
+  children: [...groupsMap.entries()].map(([g, sgMap]) => ({
+    name: g,
+    children: [...sgMap.entries()].map(([sg, arr]) => ({
+      name: sg,
+      children: arr.map(n => ({ name: n.id, data: n }))
+    }))
+  }))
+};
+
+// ---- A3 landscape canvas, mm units, 1 svg unit = 1 mm ----
+const CX = 200, CY = 158;
+const R_LEAF = 90, R_ARC = 104, R_LABEL = 118;
+const FRAME = {x:6,y:6,w:408,h:285};
+
+const tree = d3.cluster()
+  .size([2 * Math.PI, R_LEAF])
+  .separation((a,b) => (a.parent === b.parent ? 1 : 1.6));
+
+const root = tree(d3.hierarchy(hierarchyData)
+  .sort((a,b) => d3.ascending(a.data.name, b.data.name)));
+
+const leafByName = new Map(root.leaves().map(d => [d.data.name, d]));
+root.leaves().forEach(d => { d.outgoing = []; d.incoming = []; });
+
+const links = DATA.edges.map(e => {
+  const s = leafByName.get(e.source), t = leafByName.get(e.target);
+  if(!s || !t || s===t) return null;
+  const link = {source: s, target: t, edge: e};
+  s.outgoing.push(link);
+  t.incoming.push(link);
+  return link;
+}).filter(Boolean);
+
+const lineGen = d3.lineRadial()
+  .curve(d3.curveBundle.beta(0.82))
+  .radius(d => d.y)
+  .angle(d => d.x);
+
+const svg = d3.select("#viz");
+
+// ---- cutting-mat grid (drawn first = bottom layer) ----
+const gridGroup = svg.append("g").attr("id","Grid").attr("class","grid-layer");
+(function buildGrid(){
+  let fineD = "", boldD = "";
+  for(let x=FRAME.x; x<=FRAME.x+FRAME.w+0.01; x+=10){
+    const d = `M${x.toFixed(2)},${FRAME.y} L${x.toFixed(2)},${FRAME.y+FRAME.h}`;
+    if(Math.round(x)%50===0) boldD += d+" "; else fineD += d+" ";
+  }
+  for(let y=FRAME.y; y<=FRAME.y+FRAME.h+0.01; y+=10){
+    const d = `M${FRAME.x},${y.toFixed(2)} L${FRAME.x+FRAME.w},${y.toFixed(2)}`;
+    if(Math.round(y)%50===0) boldD += d+" "; else fineD += d+" ";
+  }
+  gridGroup.append("path").attr("id","GridFine").attr("class","grid-fine").attr("d",fineD.trim());
+  gridGroup.append("path").attr("id","GridBold").attr("class","grid-bold").attr("d",boldD.trim());
+})();
+
+// print frame + corner registration ticks
+const frameGroup = svg.append("g").attr("id","Frame");
+frameGroup.append("rect").attr("class","frame").attr("x",FRAME.x).attr("y",FRAME.y).attr("width",FRAME.w).attr("height",FRAME.h);
+[[6,6,1,1],[414,6,-1,1],[6,291,1,-1],[414,291,-1,-1]].forEach(([x,y,sx,sy])=>{
+  frameGroup.append("path").attr("class","tick")
+    .attr("d", `M${x},${y+4*sy} L${x},${y} L${x+4*sx},${y}`);
+});
+
+// title block (top-left)
+const titleBlock = svg.append("g").attr("id","TitleBlock");
+titleBlock.append("text").attr("class","poster-title kox-text").attr("x",14).attr("y",22).text(TITLE);
+titleBlock.append("text").attr("class","poster-sub kox-text").attr("x",14).attr("y",28).text(SUB);
+
+// legend (top-right): direction colours + sightline-feature dash key
+const legendBlock = svg.append("g").attr("id","LegendBlock");
+const legendX = 336, sampleX2 = 350, textX = 353;
+let ly = 15;
+legendBlock.append("line").attr("id","legend-out-swatch").attr("x1",legendX).attr("x2",sampleX2).attr("y1",ly-0.9).attr("y2",ly-0.9)
+  .attr("stroke","var(--out)").attr("stroke-width",1).attr("stroke-linecap","round");
+legendBlock.append("text").attr("class","legend-text kox-text").attr("x",textX).attr("y",ly).text("outgoing — can see");
+ly += 4.2;
+legendBlock.append("line").attr("id","legend-in-swatch").attr("x1",legendX).attr("x2",sampleX2).attr("y1",ly-0.9).attr("y2",ly-0.9)
+  .attr("stroke","var(--in)").attr("stroke-width",1).attr("stroke-linecap","round");
+legendBlock.append("text").attr("class","legend-text kox-text").attr("x",textX).attr("y",ly).text("incoming — seen from");
+ly += 5.7;
+legendBlock.append("text").attr("class","legend-head kox-text").attr("x",legendX).attr("y",ly).text("BY SIGHTLINE FEATURE");
+ly += 3.4;
+FEATURE_ORDER.forEach(f => {
+  legendBlock.append("line").attr("id",`legend-sample-${slug(f)}`).attr("class","legend-swatch-feature")
+    .attr("x1",legendX).attr("x2",sampleX2).attr("y1",ly-0.9).attr("y2",ly-0.9)
+    .attr("stroke","var(--ink-dim)").attr("stroke-width",0.9).attr("stroke-dasharray", FEATURE_PATTERNS[f])
+    .attr("stroke-linecap","round");
+  legendBlock.append("text").attr("class","legend-text kox-text").attr("x",textX).attr("y",ly).text(f);
+  ly += 3.4;
+});
+
+// disclaimer (bottom-right)
+// size is set by --fs-disclaimer in the stylesheet at the top of this file.
+const DISCL_SIZE = parseFloat(getComputedStyle(document.documentElement).getPropertyValue("--fs-disclaimer"));
+const DISCL_LEAD = DISCL_SIZE * 1.35;   // line spacing follows the font size
+const DISCL_BASE = 285 - (DISCLAIMER_LINES.length - 1) * DISCL_LEAD;
+const disclaimerBlock = svg.append("g").attr("id","DisclaimerBlock");
+const discl = disclaimerBlock.append("text").attr("class","disclaimer kox-text").attr("x",406).attr("y",DISCL_BASE).attr("text-anchor","end");
+DISCLAIMER_LINES.forEach((line,i) => {
+  discl.append("tspan").attr("x",406).attr("dy", i===0? 0 : DISCL_LEAD).text(line);
+});
+
+// diagram group, centered
+const g = svg.append("g").attr("id","Diagram").attr("transform", `translate(${CX},${CY})`);
+
+// subtle radial guide rings
+g.append("g").attr("id","GuideRings").selectAll("circle")
+  .data([0.35,0.65,1])
+  .join("circle")
+  .attr("class","guide-ring")
+  .attr("r", f => f*R_LEAF)
+  .attr("fill","none");
+
+// group boundary arcs + horizontal (non-radiating) labels
+const groupArcG = g.append("g").attr("id","GroupArcs");
+const groupLabelG = g.append("g").attr("id","GroupLabels");
+const groupArc = d3.arc().innerRadius(R_ARC).outerRadius(R_ARC);
+[...groupsMap.keys()].forEach(gname => {
+  const leaves = root.leaves().filter(d => d.data.data.group === gname);
+  if(!leaves.length) return;
+  const angles = leaves.map(d=>d.x);
+  const a0 = d3.min(angles), a1 = d3.max(angles);
+  const pad = 0.012;
+  groupArcG.append("path").attr("class","group-arc")
+    .attr("d", groupArc({startAngle:a0-pad, endAngle:a1+pad}));
+
+  const mid = (a0+a1)/2;
+  const lx = R_LABEL * Math.sin(mid);
+  const ly2 = -R_LABEL * Math.cos(mid);
+  let anchor = "middle";
+  if (lx > 8) anchor = "start";
+  else if (lx < -8) anchor = "end";
+  groupLabelG.append("text")
+    .attr("class","group-label kox-text")
+    .attr("x", lx).attr("y", ly2)
+    .attr("text-anchor", anchor)
+    .attr("dy","0.32em")
+    .text(gname.toUpperCase());
+});
+
+// links — dash pattern encodes the logged visible feature
+const linkPaths = g.append("g").attr("id","Sightlines").attr("fill","none")
+  .selectAll("path")
+  .data(links)
+  .join("path")
+  .attr("class","link")
+  .attr("stroke-dasharray", d => FEATURE_PATTERNS[dominantFeature(d.edge)] || null)
+  .attr("d", d => lineGen(d.source.path(d.target)));
+
+// nodes (leaves) — labels radiate outward
+const node = g.append("g").attr("id","Nodes").selectAll("g")
+  .data(root.leaves())
+  .join("g")
+  .attr("class","node")
+  .attr("transform", d => `rotate(${d.x*180/Math.PI-90}) translate(${d.y},0)`);
+
+node.append("circle").attr("r", 0.55);
+
+node.append("text")
+  .attr("class","kox-text")
+  .attr("dy","0.31em")
+  .attr("x", d => d.x < Math.PI ? 2 : -2)
+  .attr("text-anchor", d => d.x < Math.PI ? "start" : "end")
+  .attr("transform", d => d.x >= Math.PI ? "rotate(180)" : null)
+  .text(d => d.data.name);
+
+// ---------- knockouts: cut the grid out from behind every text block ----------
+function addBlockKnockout(gEl, padX, padY){
+  const bbox = gEl.getBBox();
+  const rect = document.createElementNS(svgNS,"rect");
+  rect.setAttribute("x", bbox.x-padX); rect.setAttribute("y", bbox.y-padY);
+  rect.setAttribute("width", bbox.width+2*padX); rect.setAttribute("height", bbox.height+2*padY);
+  rect.setAttribute("class","knockout");
+  gEl.insertBefore(rect, gEl.firstChild);
+}
+function addTextKnockout(tEl){
+  const bbox = tEl.getBBox();
+  const rect = document.createElementNS(svgNS,"rect");
+  rect.setAttribute("x", bbox.x-0.6); rect.setAttribute("y", bbox.y-0.4);
+  rect.setAttribute("width", bbox.width+1.2); rect.setAttribute("height", bbox.height+0.8);
+  rect.setAttribute("class","knockout");
+  const tf = tEl.getAttribute("transform");
+  if(tf) rect.setAttribute("transform", tf);
+  tEl.parentNode.insertBefore(rect, tEl);
+}
+(function buildAllKnockouts(){
+  svg.selectAll(".knockout").remove();
+  addBlockKnockout(document.getElementById("TitleBlock"), 2.5, 2);
+  addBlockKnockout(document.getElementById("LegendBlock"), 3, 2);
+  addBlockKnockout(document.getElementById("DisclaimerBlock"), 2.5, 2);
+  document.querySelectorAll(".group-label.kox-text").forEach(addTextKnockout);
+  document.querySelectorAll("#Nodes text.kox-text").forEach(addTextKnockout);
+})();
+
+// ---------- hover picture ----------
+// Looks for a file named after the node code inside a folder called "images"
+// sitting next to this HTML file. e.g. hovering LAWN looks for images/LAWN.jpg,
+// then images/LAWN.jpeg, images/LAWN.png, images/LAWN.webp. First one that
+// exists is shown; if none exist, nothing is shown.
+const IMG_DIR  = "images/";
+const IMG_EXTS = [".jpg",".jpeg",".png",".webp"];
+const nodeImg  = document.getElementById("nodeImg");
+const imgHint  = document.getElementById("imgHint");
+
+function showImage(id){
+  let i = 0;
+  nodeImg.style.display = "none";
+  imgHint.style.display = "none";
+  nodeImg.onload  = () => { nodeImg.style.display = "block"; imgHint.style.display = "none"; };
+  nodeImg.onerror = () => {
+    i++;
+    if(i < IMG_EXTS.length){ nodeImg.src = IMG_DIR + id + IMG_EXTS[i]; }
+    else {
+      // delete these two lines if you don't want the reminder
+      imgHint.textContent = "no picture yet — add " + IMG_DIR + id + ".jpg";
+      imgHint.style.display = "block";
+    }
+  };
+  nodeImg.src = IMG_DIR + id + IMG_EXTS[0];
+}
+function hideImage(){
+  nodeImg.onerror = null; nodeImg.onload = null;
+  nodeImg.style.display = "none";
+  imgHint.style.display = "none";
+}
+
+// ---------- hover -> read the data ----------
+function nodeDetail(d){
+  const n = d.data.data;
+  const out = d.outgoing.map(l=>l.edge).sort((a,b)=>a.target.localeCompare(b.target));
+  const inn = d.incoming.map(l=>l.edge).sort((a,b)=>a.source.localeCompare(b.source));
+  const row = (e, other) => {
+    const on = leafByName.get(other).data.data;
+    const feat = e.features.length ? e.features.join(', ') : 'general/whole';
+    const capTxt = on.capacity ? `cap. ${on.capacity}` : 'cap. unknown';
+    return `<div class="conn"><b>${other}</b> — ${on.desc}
+      <span>${capTxt} · via ${feat}${e.weight>1?` · logged ×${e.weight}`:''}</span></div>`;
+  };
+  let html = `<h2>${n.group} / ${n.subgroup}</h2><p class="id">${n.id}</p><p class="desc">${n.desc}</p>`;
+  html += `<div class="rowgrp out"><h3>Can see (${out.length})</h3>` +
+    (out.length ? out.map(e=>row(e,e.target)).join("") : `<div class="empty">none logged</div>`) + `</div>`;
+  html += `<div class="rowgrp in"><h3>Seen from (${inn.length})</h3>` +
+    (inn.length ? inn.map(e=>row(e,e.source)).join("") : `<div class="empty">none logged</div>`) + `</div>`;
+  document.getElementById("detail").innerHTML = html;
+}
+
+node.on("mouseenter", (event, d) => {
+  linkPaths
+    .classed("out", l => l.source === d)
+    .classed("in", l => l.target === d)
+    .filter(l => l.source===d || l.target===d)
+    .raise();
+  linkPaths.style("stroke-opacity", l => (l.source===d || l.target===d) ? null : 0.06);
+
+  node.classed("hovered", nd => nd===d)
+      .classed("src-hit", nd => d.outgoing.some(l=>l.target===nd))
+      .classed("tgt-hit", nd => d.incoming.some(l=>l.source===nd));
+
+  nodeDetail(d);
+  showImage(d.data.name);
+});
+
+svg.on("mouseleave", resetHover);
+
+function resetHover(){
+  linkPaths.classed("out",false).classed("in",false).style("stroke-opacity",null);
+  node.classed("hovered",false).classed("src-hit",false).classed("tgt-hit",false);
+  hideImage();
+  document.getElementById("detail").innerHTML = `<p class="empty">Hover any label on the diagram to see its sightlines listed here. Nodes with only grey edges (e.g. APAT, the apartment construction site) are never a vantage point in this log — only ever something that gets seen. Line dash pattern shows the visible feature — see the key on the poster itself.</p>`;
+}
+resetHover();
+</script>
+</body>
+</html>
